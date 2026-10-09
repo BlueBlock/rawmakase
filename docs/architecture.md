@@ -59,7 +59,7 @@ files should preserve.
 | `catalog_session` | The open catalog and the lists read from it, with no window: opening it, reading it again, writes that must keep those lists in step (ratings, descriptive metadata, collections, virtual copies and their names), and the background reads that fill in capture times and photo info for photos added from folders. Above `photo` and `raw`, as reading a RAW's info opens it; `app::library` decides which photos are online and shows the lists | `mod.rs`, `backfill.rs`, `background.rs` |
 | `lr_develop` | Best-effort conversion of Lightroom's serialized Develop settings into a recipe, through XMP; below the catalog, so edit resolution can use it | `lr_develop.rs` |
 | `app` | Desktop editor state, UI, dialogs, background task coordination and presentation | Components described below |
-| `platform` | OS integration: the Linux GVFS filesystem bridge, drives, the file manager and the browser | `network.rs`, `volume.rs`, `reveal.rs`, `web.rs` |
+| `platform` | OS integration: the Linux GVFS filesystem bridge, drives, the file manager, the browser and the desktop's text size | `network.rs`, `volume.rs`, `reveal.rs`, `web.rs`, `text_scale.rs` |
 | `updates` | Release checks and self-update through fastframe-update; the notice itself is in `app` | `updates.rs` |
 | `comparison` | Reproducible reference-image comparisons using the same develop APIs | `comparison.rs` |
 
@@ -219,8 +219,11 @@ RAW development and exports use the existing CPU implementation.
 `develop::gpu` uses portable WGSL compute through wgpu: Metal on macOS and Vulkan
 on supported Linux drivers, including NVIDIA and AMD. On the desktop it shares the
 UI's wgpu device (eframe's), which the app creates with the storage limits previews
-need (`gpu::required_limits`) and a high-performance adapter; OpenGL and software
-adapters are not used for compute. Every GPU call runs inside its own validation,
+need (`gpu::required_limits`) and a high-performance adapter. On Linux the window's
+adapter is the first GPU the system lists instead: the display's GPU, or the discrete
+one under `prime-run` or `DRI_PRIME=1`, because a render-offload GPU can claim it
+presents to the window and then fail to configure it. OpenGL and software adapters
+are not used for compute. Every GPU call runs inside its own validation,
 internal and out-of-memory error scopes, so a failure disables the preview GPU
 without reaching the UI. Headless callers (tests, the benchmark) create a device of
 their own. It uses ordinary 32-bit storage buffers, Rgba8Unorm storage textures and

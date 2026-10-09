@@ -4537,6 +4537,38 @@ fn only_size_changes_hold_previews_gpu_work() {
     assert!(!reconfigures_surface(&WindowEvent::RedrawRequested));
     assert!(!reconfigures_surface(&WindowEvent::Focused(true)));
 }
+#[cfg(target_os = "linux")]
+#[test]
+fn the_window_draws_on_the_gpu_the_system_lists_first() {
+    use wgpu::{DeviceType::*, PowerPreference};
+    // An Optimus laptop (#375): Mesa's device-select layer lists the Intel GPU,
+    // which drives the display, before the render-offload-only NVIDIA GPU.
+    let optimus = [
+        ("Intel(R) Iris(R) Xe Graphics", IntegratedGpu),
+        ("NVIDIA GeForce MX450", DiscreteGpu),
+        ("llvmpipe (LLVM 20.1.8, 256 bits)", Cpu),
+    ];
+    assert_eq!(display_adapter(&optimus, None, None), Some(0));
+    // prime-run lists the NVIDIA GPU first.
+    let offloaded = [optimus[1], optimus[0], optimus[2]];
+    assert_eq!(display_adapter(&offloaded, None, None), Some(0));
+    // Software rendering only when no GPU can draw the window.
+    assert_eq!(
+        display_adapter(&[optimus[2], optimus[0]], None, None),
+        Some(1)
+    );
+    assert_eq!(display_adapter(&[optimus[2]], None, None), Some(0));
+    assert_eq!(display_adapter(&[], None, None), None);
+    // WGPU_POWER_PREF and WGPU_ADAPTER_NAME still choose.
+    let high = Some(PowerPreference::HighPerformance);
+    assert_eq!(display_adapter(&optimus, high, None), Some(1));
+    let low = Some(PowerPreference::LowPower);
+    assert_eq!(display_adapter(&offloaded, low, None), Some(1));
+    let none = Some(PowerPreference::None);
+    assert_eq!(display_adapter(&offloaded, none, None), Some(0));
+    assert_eq!(display_adapter(&optimus, None, Some("NVIDIA")), Some(1));
+    assert_eq!(display_adapter(&optimus, None, Some("radeon")), Some(0));
+}
 #[test]
 fn eframes_reason_for_giving_up_is_kept() {
     use log::Log;
@@ -4700,6 +4732,31 @@ fn editor_with_a_stalled_catalog() -> anyhow::Result<(tempfile::TempDir, Editor)
     e.document.edit.setup_mut().exposure = 0.7;
     e.commit_edit(before, None);
     Ok((d, e))
+}
+#[test]
+fn an_editor_quitting_leaves_another_tests_export_in_place() -> anyhow::Result<()> {
+    // Tests share one process: an editor's exit sequence deleting every export
+    // still being written failed a parallel test's export (missing file).
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("export.tif");
+    let image = crate::rendered::Rendered {
+        width: 2,
+        height: 2,
+        pixels: vec![[0.5; 3]; 4],
+    };
+    let staged = crate::export::stage(
+        &path,
+        &image,
+        &Default::default(),
+        &Default::default(),
+        &Default::default(),
+    )?;
+    let ctx = egui::Context::default();
+    let mut e = Editor::with_context(&ctx, None, crate::app::session::Session::default(), None);
+    e.exit_within(std::time::Duration::from_secs(3));
+    crate::storage::persist(staged.file, &path, crate::export::Replace::NoClobber)?;
+    assert!(path.exists());
+    Ok(())
 }
 #[test]
 fn quitting_gives_up_on_a_save_the_catalog_does_not_answer() -> anyhow::Result<()> {
